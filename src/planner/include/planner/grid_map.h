@@ -3,14 +3,19 @@
 #include <iostream>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <string>
 #include <random>
+#include <vector>
 
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
 #include <pcl/io/pcd_io.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+
+#include <eigen3/Eigen/Eigen>
 
 #define IN_CLOSE 97
 #define IN_OPEN 98
@@ -24,25 +29,25 @@ namespace trailer_planner
     typedef GridNode* GridNodePtr;
 
     struct GridNode
-    {   
+    {
         Eigen::Vector2i index;
         double fScore;
         double gScore;
         GridNodePtr parent;
         char id;
 
-        GridNode() : 
-            index(Eigen::Vector2i::Zero()), 
-            fScore(0.0), 
-            gScore(0.0), 
-            parent(nullptr), 
+        GridNode() :
+            index(Eigen::Vector2i::Zero()),
+            fScore(0.0),
+            gScore(0.0),
+            parent(nullptr),
             id(IS_UNKNOWN) {}
-        
-        GridNode(const Eigen::Vector2i& _index) : 
-            index(_index), 
-            fScore(0.0), 
-            gScore(0.0), 
-            parent(nullptr), 
+
+        GridNode(const Eigen::Vector2i& _index) :
+            index(_index),
+            fScore(0.0),
+            gScore(0.0),
+            parent(nullptr),
             id(IS_UNKNOWN) {}
 
         void reset()
@@ -52,7 +57,7 @@ namespace trailer_planner
             id = IS_UNKNOWN;
             return;
         }
-        
+
         ~GridNode(){};
     };
 
@@ -79,29 +84,31 @@ namespace trailer_planner
             GridNodePtr* grid_node_map = nullptr;
             vector<char>   occ_buffer;
             vector<double> esdf_buffer;
-            sensor_msgs::PointCloud2 esdf_cloud;
+            sensor_msgs::msg::PointCloud2 esdf_cloud;
 
             //ros
-            bool       map_ready = false;
-            ros::Timer vis_timer;
-            ros::Publisher esdf_pub;
-            ros::Subscriber cloud_sub;
+            bool                                                          map_ready = false;
+            rclcpp::Node*                                                 node_ptr = nullptr;
+            rclcpp::Logger                                                logger_ = rclcpp::get_logger("grid_map");
+            rclcpp::TimerBase::SharedPtr                                  vis_timer;
+            rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr   esdf_pub;
+            rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub;
 
         public:
             GridMap() {}
             ~GridMap()
-            { 
-                for (int i=0; i<buffer_size; i++) 
+            {
+                for (int i=0; i<buffer_size; i++)
                     delete[] grid_node_map[i];
 
                 delete[] grid_node_map;
                 return;
             }
 
-            void init(ros::NodeHandle& nh);
+            void init(rclcpp::Node* node);
             void updateESDF2d();
-            void visCallback(const ros::TimerEvent& /*event*/);
-            void cloudCallback(const sensor_msgs::PointCloud2 msg);
+            void visCallback();
+            void cloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
             std::pair<std::vector<Eigen::Vector2d>, double> astarPlan(const Eigen::Vector2d& start, const Eigen::Vector2d& end);
 
             inline void getDistance(const Eigen::Vector2d& pos, double& distance);
@@ -162,7 +169,7 @@ namespace trailer_planner
                 boundIndex(current_idx);
                 values[x][y] = esdf_buffer[toAddress(current_idx)];
             }
-        
+
         // value & grad
         double v0 = values[0][0] * (1 - diff[0]) + values[1][0] * diff[0];
         double v1 = values[0][1] * (1 - diff[0]) + values[1][1] * diff[0];
@@ -203,7 +210,7 @@ namespace trailer_planner
                 boundIndex(current_idx);
                 values[x][y] = esdf_buffer[toAddress(current_idx)];
             }
-        
+
         // value & grad
         double v0 = values[0][0] * (1 - diff[0]) + values[1][0] * diff[0];
         double v1 = values[0][1] * (1 - diff[0]) + values[1][1] * diff[0];
@@ -250,26 +257,26 @@ namespace trailer_planner
         return;
     }
 
-    inline int GridMap::toAddress(const Eigen::Vector2i& id) 
+    inline int GridMap::toAddress(const Eigen::Vector2i& id)
     {
         return id(0) * voxel_num(1) + id(1);
     }
 
-    inline int GridMap::toAddress(const int& x, const int& y) 
+    inline int GridMap::toAddress(const int& x, const int& y)
     {
         return x * voxel_num(1) + y;
     }
-    
-    inline bool GridMap::isInMap(const Eigen::Vector2d& pos) 
+
+    inline bool GridMap::isInMap(const Eigen::Vector2d& pos)
     {
         if (pos(0) < min_boundary(0) + 1e-4 || \
-            pos(1) < min_boundary(1) + 1e-4     ) 
+            pos(1) < min_boundary(1) + 1e-4     )
         {
             return false;
         }
 
         if (pos(0) > max_boundary(0) - 1e-4 || \
-            pos(1) > max_boundary(1) - 1e-4     ) 
+            pos(1) > max_boundary(1) - 1e-4     )
         {
             return false;
         }
@@ -285,7 +292,7 @@ namespace trailer_planner
         }
 
         if (idx(0) > voxel_num(0) - 1 || \
-            idx(1) > voxel_num(1) - 1     ) 
+            idx(1) > voxel_num(1) - 1     )
         {
             return false;
         }
@@ -298,7 +305,7 @@ namespace trailer_planner
         Eigen::Vector2i id;
 
         posToIndex(pos, id);
-        
+
         return isOccupancy(id);
     }
 

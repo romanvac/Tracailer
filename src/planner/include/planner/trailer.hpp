@@ -3,9 +3,14 @@
 #include <eigen3/Eigen/Eigen>
 #include <chrono>
 #include <random>
-#include <ros/ros.h>
-#include <visualization_msgs/Marker.h>
-#include <visualization_msgs/MarkerArray.h>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <rclcpp/rclcpp.hpp>
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
+#include <geometry_msgs/msg/point.hpp>
 
 #define PI_X_2 6.283185307179586
 #define PRINTF_WHITE(STRING) std::cout<<STRING
@@ -36,30 +41,42 @@ namespace trailer_planner
             vector<double> pthetas;
             Eigen::MatrixXd terminal_area;
             Eigen::Matrix2Xd terminal_points;
-            visualization_msgs::Marker mesh_msg;
-            visualization_msgs::MarkerArray array_msg;
+            visualization_msgs::msg::Marker mesh_msg;
+            visualization_msgs::msg::MarkerArray array_msg;
 
-            ros::Publisher mesh_pub;
-            ros::Publisher terminal_pub;
-            
-        public:
-            inline void init(ros::NodeHandle& nh)
+            rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr mesh_pub;
+            rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr terminal_pub;
+
+        private:
+            // Helper: declare-if-missing + read; keeps single-node parameter namespace.
+            template <typename T>
+            static T declareOrGet(rclcpp::Node* node, const std::string& name, const T& default_value)
             {
-                nh.getParam("/trailer/wheel_base", wheel_base);
-                nh.getParam("/trailer/width", width);
-                nh.getParam("/trailer/rear_length", rear_length);
-                nh.getParam("/trailer/head_length", head_length);
-                nh.getParam("/trailer/max_steer", max_steer);
-                nh.getParam("/trailer/max_dtheta", max_dtheta);
-                nh.getParam("/trailer/terminal_tol_x", terminal_tol_x);
-                nh.getParam("/trailer/terminal_tol_y", terminal_tol_y);
-                nh.param<std::vector<double>>("/trailer/length", length, std::vector<double>());
-                nh.param<std::vector<double>>("/trailer/Ltail", Ltail, std::vector<double>());
-                nh.param<std::vector<double>>("/trailer/Lhead", Lhead, std::vector<double>());
-                nh.param<std::vector<double>>("/trailer/init_pthetas", pthetas, std::vector<double>());
+                if (!node->has_parameter(name))
+                    node->declare_parameter<T>(name, default_value);
+                T value = default_value;
+                node->get_parameter(name, value);
+                return value;
+            }
 
-                mesh_pub = nh.advertise<visualization_msgs::MarkerArray>("trailer/mesh", 1);
-                terminal_pub = nh.advertise<visualization_msgs::Marker>("trailer/terminal", 1);
+        public:
+            inline void init(rclcpp::Node* node)
+            {
+                wheel_base      = declareOrGet<double>(node, "trailer.wheel_base",     0.0);
+                width           = declareOrGet<double>(node, "trailer.width",          0.0);
+                rear_length     = declareOrGet<double>(node, "trailer.rear_length",    0.0);
+                head_length     = declareOrGet<double>(node, "trailer.head_length",    0.0);
+                max_steer       = declareOrGet<double>(node, "trailer.max_steer",      0.0);
+                max_dtheta      = declareOrGet<double>(node, "trailer.max_dtheta",     0.0);
+                terminal_tol_x  = declareOrGet<double>(node, "trailer.terminal_tol_x", 0.0);
+                terminal_tol_y  = declareOrGet<double>(node, "trailer.terminal_tol_y", 0.0);
+                length          = declareOrGet<std::vector<double>>(node, "trailer.length",       std::vector<double>());
+                Ltail           = declareOrGet<std::vector<double>>(node, "trailer.Ltail",        std::vector<double>());
+                Lhead           = declareOrGet<std::vector<double>>(node, "trailer.Lhead",        std::vector<double>());
+                pthetas         = declareOrGet<std::vector<double>>(node, "trailer.init_pthetas", std::vector<double>());
+
+                mesh_pub     = node->create_publisher<visualization_msgs::msg::MarkerArray>("trailer/mesh", 1);
+                terminal_pub = node->create_publisher<visualization_msgs::msg::Marker>("trailer/terminal", 1);
 
                 assert(TRAILER_NUM==Lhead.size());
                 assert(TRAILER_NUM==Ltail.size());
@@ -76,8 +93,8 @@ namespace trailer_planner
                 box_width = width + terminal_tol_y;
 
                 mesh_msg.id = 0;
-                mesh_msg.type = visualization_msgs::Marker::LINE_LIST;
-                mesh_msg.action = visualization_msgs::Marker::ADD;
+                mesh_msg.type = visualization_msgs::msg::Marker::LINE_LIST;
+                mesh_msg.action = visualization_msgs::msg::Marker::ADD;
                 mesh_msg.pose.orientation.w = 1.0;
                 mesh_msg.scale.x = 0.05;
                 mesh_msg.color.r = 1.0;
@@ -87,12 +104,12 @@ namespace trailer_planner
                 mesh_msg.header.frame_id = "world";
 
                 // box0
-                geometry_msgs::Point p;
+                geometry_msgs::msg::Point p;
                 p.z = 0.0;
                 p.x = -rear_length;
                 p.y = width * 0.5;
                 mesh_msg.points.push_back(p);
-                p.x += length[0]; 
+                p.x += length[0];
                 mesh_msg.points.push_back(p);
                 mesh_msg.points.push_back(p);
                 p.y -= width;
@@ -228,7 +245,7 @@ namespace trailer_planner
                         p.y = 0.0;
                         p.x += rear_length;
                     }
-                    
+
                     if (i<TRAILER_NUM-1 && Ltail[i+1]>1e-4)
                     {
                         mesh_msg.points.push_back(p);
@@ -246,7 +263,7 @@ namespace trailer_planner
 
                     // left_wheel
                     p.x -= 0.5 * wheel_width;
-                    p.y += 0.5 * width - wheel_width; 
+                    p.y += 0.5 * width - wheel_width;
                     mesh_msg.points.push_back(p);
                     p.x += wheel_width;
                     mesh_msg.points.push_back(p);
@@ -273,7 +290,7 @@ namespace trailer_planner
                     mesh_msg.points.push_back(p);
                     mesh_msg.points.push_back(p);
                     p.y += wheel_width;
-                    mesh_msg.points.push_back(p);                    
+                    mesh_msg.points.push_back(p);
 
                     array_msg.markers.push_back(mesh_msg);
                 }
@@ -283,7 +300,7 @@ namespace trailer_planner
             {
                 assert((size_t)state.size()==3+TRAILER_NUM);
 
-                visualization_msgs::MarkerArray msg(array_msg);
+                visualization_msgs::msg::MarkerArray msg(array_msg);
                 for (size_t i=0; i<msg.markers.size(); i++)
                 {
                     msg.markers[i].id += id;
@@ -309,7 +326,8 @@ namespace trailer_planner
                     msg.markers[i].pose.orientation.y = 0.0;
                     msg.markers[i].pose.orientation.z = sin(state[i+2]/2.0);
                 }
-                mesh_pub.publish(msg);
+                if (mesh_pub)
+                    mesh_pub->publish(msg);
             }
 
             inline void setShowTerminal(const Eigen::Vector3d& se2)
@@ -317,11 +335,11 @@ namespace trailer_planner
                 terminal_area.resize(4, 4);
                 terminal_area.setZero();
                 terminal_points.resize(2, 4);
-                
-                visualization_msgs::Marker msg;
+
+                visualization_msgs::msg::Marker msg;
                 msg.id = 0;
-                msg.type = visualization_msgs::Marker::LINE_LIST;
-                msg.action = visualization_msgs::Marker::ADD;
+                msg.type = visualization_msgs::msg::Marker::LINE_LIST;
+                msg.action = visualization_msgs::msg::Marker::ADD;
                 msg.pose.orientation.w = 1.0;
                 msg.scale.x = 0.05;
                 msg.color.r = msg.color.g = msg.color.b = 0.0;
@@ -332,7 +350,7 @@ namespace trailer_planner
                 double w = box_width / 2.0;
                 double st = sin(se2(2));
                 double ct = cos(se2(2));
-                geometry_msgs::Point p;
+                geometry_msgs::msg::Point p;
                 p.z = 0.0;
                 p.x = se2.x() + ct*h - st*w;
                 p.y = se2.y() + st*h + ct*w;
@@ -365,7 +383,8 @@ namespace trailer_planner
                 p.y = se2.y() + st*h + ct*w;
                 msg.points.push_back(p);
 
-                terminal_pub.publish(msg);
+                if (terminal_pub)
+                    terminal_pub->publish(msg);
                 return;
             }
 
@@ -374,7 +393,7 @@ namespace trailer_planner
                 state.resize(TRAILER_NUM+3);
                 state.setConstant(box(2));
                 Eigen::Vector2d half_box(box_length/2.0, box_width/2.0);
-                state.head(2) = box.head(2) + Eigen::Vector2d(cos(box(2)), sin(box(2))) 
+                state.head(2) = box.head(2) + Eigen::Vector2d(cos(box(2)), sin(box(2)))
                                                 * (box_length/2.0 - length[0] + rear_length - terminal_tol_x/2.0);
             }
 
@@ -411,7 +430,7 @@ namespace trailer_planner
                 for (size_t i=0; i<TRAILER_NUM; i++)
                     if (fabs(dAngle(state(i+2), state(i+3))) > max_dtheta)
                         return true;
-                
+
                 return false;
             }
 
@@ -423,7 +442,7 @@ namespace trailer_planner
                 for (size_t i=0; i<TRAILER_NUM; i++)
                     if (fabs(dAngle(state(i*3+2), state(i*3+5))) > max_dtheta)
                         return true;
-                
+
                 return false;
             }
 
@@ -508,7 +527,7 @@ namespace trailer_planner
                 double st = sin(state(2));
                 p_temp(0) = ct*point(0) - st*point(1) + state(0);
                 p_temp(1) = st*point(0) + ct*point(1) + state(1);
-                if (p_temp(0) > -rear_length && 
+                if (p_temp(0) > -rear_length &&
                     p_temp(0) < length[0] - rear_length &&
                     p_temp(1) > -0.5*width && p_temp(1) < 0.5*width)
                     invalid = true;
@@ -524,7 +543,7 @@ namespace trailer_planner
                         traileri(1) = joint(1) - Lhead[i]*st;
                         p_temp(0) = ct*point(0) - st*point(1) + traileri(0);
                         p_temp(1) = st*point(0) + ct*point(1) + traileri(1);
-                        if (p_temp(0) > -0.5 * length[i+1] && 
+                        if (p_temp(0) > -0.5 * length[i+1] &&
                             p_temp(0) < 0.5 * length[i+1] &&
                             p_temp(1) > -0.5*width && p_temp(1) < 0.5*width)
                         {
@@ -557,7 +576,7 @@ namespace trailer_planner
                 double st = sin(state(2));
                 p_temp(0) = ct*point(0) - st*point(1) + state(0);
                 p_temp(1) = st*point(0) + ct*point(1) + state(1);
-                if (p_temp(0) > -rear_length && 
+                if (p_temp(0) > -rear_length &&
                     p_temp(0) < length[0] - rear_length &&
                     p_temp(1) > -0.5*width && p_temp(1) < 0.5*width)
                     invalid = true;
@@ -569,7 +588,7 @@ namespace trailer_planner
                         st = sin(state(3*i+5));
                         p_temp(0) = ct*point(0) - st*point(1) + state(3*i+3);
                         p_temp(1) = st*point(0) + ct*point(1) + state(3*i+4);
-                        if (p_temp(0) > -0.5 * length[i+1] && 
+                        if (p_temp(0) > -0.5 * length[i+1] &&
                             p_temp(0) < 0.5 * length[i+1] &&
                             p_temp(1) > -0.5*width && p_temp(1) < 0.5*width)
                         {

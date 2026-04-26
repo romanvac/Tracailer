@@ -1,28 +1,48 @@
 #include "planner/hybrid_astar.h"
 
+#include <chrono>
+#include <thread>
+
 namespace trailer_planner
 {
-    void HybridAstar::init(ros::NodeHandle& nh)
+    namespace
     {
-        nh.param("hybrid_astar/yaw_resolution", yaw_resolution, 3.15);
-        nh.param("hybrid_astar/lambda_heu", lambda_heu, 1.0);
-        nh.param("hybrid_astar/weight_r2", weight_r2, 1.0);
-        nh.param("hybrid_astar/weight_delta", weight_delta, 1.0);
-        nh.param("hybrid_astar/weight_v_change", weight_v_change, 0.0);
-        nh.param("hybrid_astar/weight_delta_change", weight_delta_change, 0.0);
-        nh.param("hybrid_astar/time_interval", time_interval, 0.0);
-        nh.param("hybrid_astar/oneshot_range", oneshot_range, 0.0);
-        nh.param("hybrid_astar/check_ratio", check_ratio, 1.0);
-        nh.param("hybrid_astar/max_vel", max_vel, 1.0);
-        nh.param("hybrid_astar/pos_tol", pos_tol, 1.0);
-        nh.param("hybrid_astar/theta_tol", theta_tol, 1.0);
-        nh.param("hybrid_astar/max_time_consume", max_time_consume, 1.0);
-        nh.param("hybrid_astar/in_test", in_test, false);
-        nh.param("hybrid_astar/heuristic_type", heuristic_type, 0);
+        template <typename T>
+        T declareOrGetParam(rclcpp::Node* node, const std::string& name, const T& default_value)
+        {
+            if (!node->has_parameter(name))
+                node->declare_parameter<T>(name, default_value);
+            T value = default_value;
+            node->get_parameter(name, value);
+            return value;
+        }
+    }
+
+    void HybridAstar::init(rclcpp::Node* node)
+    {
+        node_ptr = node;
+        logger_  = node->get_logger();
+
+        yaw_resolution        = declareOrGetParam<double>(node, "hybrid_astar.yaw_resolution",     3.15);
+        lambda_heu            = declareOrGetParam<double>(node, "hybrid_astar.lambda_heu",         1.0);
+        weight_r2             = declareOrGetParam<double>(node, "hybrid_astar.weight_r2",          1.0);
+        weight_delta          = declareOrGetParam<double>(node, "hybrid_astar.weight_delta",       1.0);
+        weight_v_change       = declareOrGetParam<double>(node, "hybrid_astar.weight_v_change",    0.0);
+        weight_delta_change   = declareOrGetParam<double>(node, "hybrid_astar.weight_delta_change",0.0);
+        time_interval         = declareOrGetParam<double>(node, "hybrid_astar.time_interval",      0.0);
+        oneshot_range         = declareOrGetParam<double>(node, "hybrid_astar.oneshot_range",      0.0);
+        check_ratio           = declareOrGetParam<double>(node, "hybrid_astar.check_ratio",        1.0);
+        max_vel               = declareOrGetParam<double>(node, "hybrid_astar.max_vel",            1.0);
+        pos_tol               = declareOrGetParam<double>(node, "hybrid_astar.pos_tol",            1.0);
+        theta_tol             = declareOrGetParam<double>(node, "hybrid_astar.theta_tol",          1.0);
+        max_time_consume      = declareOrGetParam<double>(node, "hybrid_astar.max_time_consume",   1.0);
+        in_test               = declareOrGetParam<bool>  (node, "hybrid_astar.in_test",            false);
+        heuristic_type        = declareOrGetParam<int>   (node, "hybrid_astar.heuristic_type",     0);
 
         if (in_test)
         {
-            expanded_pub = nh.advertise<sensor_msgs::PointCloud2>("/hybrid_astar/expanded_points", 0);
+            expanded_pub = node->create_publisher<sensor_msgs::msg::PointCloud2>(
+                "/hybrid_astar/expanded_points", rclcpp::QoS(1));
         }
 
         yaw_resolution_inv = 1.0 / yaw_resolution;
@@ -34,19 +54,19 @@ namespace trailer_planner
     {
         if (!set_done)
         {
-            ROS_ERROR("[Hybrid A*] No Setting! Can't begin planning!");
+            RCLCPP_ERROR(logger_, "[Hybrid A*] No Setting! Can't begin planning!");
             return front_end_path;
         }
 
         front_end_path.clear();
         if (!isValid(start_state))
         {
-            ROS_ERROR("[Hybrid A*] start is not free!!!");
+            RCLCPP_ERROR(logger_, "[Hybrid A*] start is not free!!!");
             return front_end_path;
         }
         if (!isValid(end_state))
         {
-            ROS_ERROR("[Hybrid A*] goal is not free!!!");
+            RCLCPP_ERROR(logger_, "[Hybrid A*] goal is not free!!!");
             return front_end_path;
         }
 
@@ -128,7 +148,10 @@ namespace trailer_planner
             node->node_state = NOT_EXPAND;
         }
 
-        ros::Time t0 = ros::Time::now();
+        auto t0 = std::chrono::steady_clock::now();
+        auto elapsed_sec = [&]() {
+            return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        };
         PathNodePtr cur_node = path_node_pool[0];
         cur_node->parent = NULL;
         cur_node->state = start_state;
@@ -158,8 +181,8 @@ namespace trailer_planner
 
                 if (!shot_path.empty())
                 {
-                    // std::cout << "[Hybrid A*] one-shot time: " << (ros::Time::now()-t1).toSec()*1000 << " ms"<<std::endl;
-                    std::cout << "[Hybrid A*] front once time: " << (ros::Time::now()-t0).toSec()*1000 << " ms"<<std::endl;
+                    // std::cout << "[Hybrid A*] one-shot time: " << <elapsed_since_t1>*1000 << " ms"<<std::endl;
+                    std::cout << "[Hybrid A*] front once time: " << elapsed_sec()*1000 << " ms"<<std::endl;
                     for (int i=shot_path.size()-1; i>=0; i--)
                         ackermann_path.push_back(shot_path[i]);
                     ackermann_path.push_back(cur_node->state);
@@ -173,7 +196,7 @@ namespace trailer_planner
                 }
             }
 
-            double time_consume = (ros::Time::now()-t0).toSec();
+            double time_consume = elapsed_sec();
             if ((cur_node->state.head(2)-end_state.head(2)).norm() < pos_tol)
             {
                 std::cout << "[Hybrid A*] front all time: " << time_consume*1000 << " ms"<<std::endl;
@@ -306,7 +329,7 @@ namespace trailer_planner
     {
         if (!set_done)
         {
-            ROS_ERROR("[Hybrid A*] No Setting! Can't begin planning!");
+            RCLCPP_ERROR(logger_, "[Hybrid A*] No Setting! Can't begin planning!");
             return front_end_path;
         }
 
@@ -327,16 +350,19 @@ namespace trailer_planner
 
         if (!isValid(start_state))
         {
-            ROS_ERROR("[Hybrid A*] start is not free!!!");
+            RCLCPP_ERROR(logger_, "[Hybrid A*] start is not free!!!");
             return front_end_path;
         }
         if (!isValid(end_state))
         {
-            ROS_ERROR("[Hybrid A*] goal is not free!!!");
+            RCLCPP_ERROR(logger_, "[Hybrid A*] goal is not free!!!");
             return front_end_path;
         }
 
-        ros::Time t0 = ros::Time::now();
+        auto t0 = std::chrono::steady_clock::now();
+        auto elapsed_sec = [&]() {
+            return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        };
         PathNodePtr cur_node = path_node_pool[0];
         cur_node->parent = NULL;
         cur_node->state = start_state;
@@ -363,18 +389,19 @@ namespace trailer_planner
             
             if((cur_node->state.head(2) - end_state.head(2)).norm() < oneshot_range)
             {
-                ros::Time t1 = ros::Time::now();
+                auto t1 = std::chrono::steady_clock::now();
                 asignShotTraj(cur_node->state, end_state);
                 if (!shot_path.empty())
                 {
-                    std::cout << "[Hybrid A*] one-shot time: " << (ros::Time::now()-t1).toSec()*1000 << " ms"<<std::endl;
-                    std::cout << "[Hybrid A*] front all time: " << (ros::Time::now()-t0).toSec()*1000 << " ms"<<std::endl;
+                    double one_shot_ms = std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count() * 1000.0;
+                    std::cout << "[Hybrid A*] one-shot time: " << one_shot_ms << " ms"<<std::endl;
+                    std::cout << "[Hybrid A*] front all time: " << elapsed_sec()*1000 << " ms"<<std::endl;
                     retrievePath(cur_node);
                     return front_end_path;
                 }
             }
 
-            double time_consume = (ros::Time::now()-t0).toSec();
+            double time_consume = elapsed_sec();
             // if (isEnd(cur_node->index, end_index))
             if (isClose(cur_node->state, end_state))
             {
@@ -511,14 +538,15 @@ namespace trailer_planner
 
     void HybridAstar::visExpanded()
     {
-        if (in_test)
+        if (in_test && expanded_pub)
         {
-            sensor_msgs::PointCloud2 expanded_msg;
+            sensor_msgs::msg::PointCloud2 expanded_msg;
             pcl::toROSMsg(expanded_points, expanded_msg);
-            expanded_msg.header.stamp = ros::Time::now();
+            if (node_ptr)
+                expanded_msg.header.stamp = node_ptr->now();
             expanded_msg.header.frame_id = "world";
-            expanded_pub.publish(expanded_msg);
-            ros::Duration(0.02).sleep();
+            expanded_pub->publish(expanded_msg);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
     }
 }

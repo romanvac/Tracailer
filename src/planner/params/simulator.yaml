@@ -1,0 +1,7 @@
+simulator_node:
+  ros__parameters:
+    sim:
+      time_resolution: 0.01
+      time_delay: 0.0
+      noise_std: 0.0
+      max_speed: 10.0

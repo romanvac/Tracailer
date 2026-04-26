@@ -2,26 +2,33 @@
 
 namespace trailer_planner
 {
-    void Planner::init(ros::NodeHandle& nh)
+    void Planner::init(rclcpp::Node* node)
     {
+        node_ptr = node;
+        logger_ = node->get_logger();
+
         trailer.reset(new Trailer);
         grid_map.reset(new GridMap);
-        
-        trailer->init(nh);
-        grid_map->init(nh);
 
-        hybrid_astar.init(nh);
+        trailer->init(node);
+        grid_map->init(node);
+
+        hybrid_astar.init(node);
         hybrid_astar.setTrailerEnv(trailer, grid_map);
-        arc_opt.init(nh);
+        arc_opt.init(node);
         arc_opt.setTrailerEnv(trailer, grid_map);
 
-        front_pub = nh.advertise<visualization_msgs::MarkerArray>("/front_path", 1);
-        end_pub = nh.advertise<visualization_msgs::MarkerArray>("/end_path", 1);
-        arc_traj_pub = nh.advertise<planner::ArcTrailerTraj>("/arc_trailer_traj", 1);
+        front_pub = node->create_publisher<visualization_msgs::msg::MarkerArray>("/front_path", 1);
+        end_pub = node->create_publisher<visualization_msgs::msg::MarkerArray>("/end_path", 1);
+        arc_traj_pub = node->create_publisher<planner::msg::ArcTrailerTraj>("/arc_trailer_traj", 1);
 
-        wps_sub = nh.subscribe<geometry_msgs::PoseWithCovarianceStamped>("/initialpose", 1, &Planner::rcvWpsCallBack, this);
-        odom_sub = nh.subscribe("odom", 1, &Planner::rcvOdomCallBack, this);
-    
+        wps_sub = node->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+            "/initialpose", rclcpp::QoS(1),
+            std::bind(&Planner::rcvWpsCallBack, this, std::placeholders::_1));
+        odom_sub = node->create_subscription<planner::msg::TrailerState>(
+            "odom", rclcpp::QoS(1),
+            std::bind(&Planner::rcvOdomCallBack, this, std::placeholders::_1));
+
         start_pos.resize(TRAILER_NUM+3);
         end_pos.resize(TRAILER_NUM+3);
         front_path.clear();
@@ -29,7 +36,7 @@ namespace trailer_planner
         return;
     }
 
-    void Planner::rcvOdomCallBack(planner::TrailerStatePtr msg)
+    void Planner::rcvOdomCallBack(const planner::msg::TrailerState::SharedPtr msg)
     {
         has_odom = true;
         Eigen::VectorXd s;
@@ -45,12 +52,12 @@ namespace trailer_planner
         return;
     }
 
-    void Planner::rcvWpsCallBack(const geometry_msgs::PoseWithCovarianceStamped msg)
+    void Planner::rcvWpsCallBack(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr /*msg*/)
     {
-        static size_t cnt = 0;     
+        static size_t cnt = 0;
 
         if (cnt > 0)
-            return; 
+            return;
 
         Eigen::VectorXd far;
         far.resize(TRAILER_NUM+3);
@@ -60,10 +67,10 @@ namespace trailer_planner
             return;
 
         Eigen::Vector3d wps(22.6, 5.86, 0.0);
-        
+
         if ((wps.head(2)-odom_pos.head(2)).norm() < 0.5)
             return;
-        
+
         if (!has_odom)
         {
             PRINT_RED("[Planner] No odom received, cannot plan.");
@@ -88,7 +95,7 @@ namespace trailer_planner
             }
             in_plan = false;
         }
-        
+
         return;
     }
 
@@ -99,9 +106,10 @@ namespace trailer_planner
         Eigen::VectorXd end_full;
         trailer->setStateFromBox(end, end_full);
 
-        ros::Time start_time = ros::Time::now();
+        rclcpp::Clock clock(RCL_ROS_TIME);
+        rclcpp::Time start_time = clock.now();
         front_path = hybrid_astar.pureAstarPlan(start, end_full);
-        PRINT_GREEN("[Planner] front end time: "<<(ros::Time::now() - start_time).toSec()<<"s");
+        PRINT_GREEN("[Planner] front end time: "<<(clock.now() - start_time).seconds()<<"s");
 
         if (front_path.empty())
             return false;
@@ -125,8 +133,8 @@ namespace trailer_planner
         if (front_path.empty())
             return;
 
-        visualization_msgs::MarkerArray front_msg;
-        std::vector<Eigen::VectorXd> se2_path; 
+        visualization_msgs::msg::MarkerArray front_msg;
+        std::vector<Eigen::VectorXd> se2_path;
         for (size_t i=0; i<front_path.size(); i++)
         {
             Eigen::VectorXd se2_state;
@@ -135,12 +143,13 @@ namespace trailer_planner
         }
         for (size_t i=0; i<TRAILER_NUM+1; i++)
         {
-            visualization_msgs::Marker sphere, line_strip;
+            visualization_msgs::msg::Marker sphere, line_strip;
             sphere.header.frame_id = line_strip.header.frame_id = "world";
-            sphere.header.stamp = line_strip.header.stamp = ros::Time::now();
-            sphere.type = visualization_msgs::Marker::SPHERE_LIST;
-            line_strip.type = visualization_msgs::Marker::LINE_STRIP;
-            sphere.action = line_strip.action = visualization_msgs::Marker::ADD;
+            if (node_ptr)
+                sphere.header.stamp = line_strip.header.stamp = node_ptr->now();
+            sphere.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+            line_strip.type = visualization_msgs::msg::Marker::LINE_STRIP;
+            sphere.action = line_strip.action = visualization_msgs::msg::Marker::ADD;
             sphere.id = i;
             line_strip.id = i + 1000;
 
@@ -153,8 +162,8 @@ namespace trailer_planner
             sphere.scale.y = 0.1;
             sphere.scale.z = 0.1;
             line_strip.scale.x = 0.1 / 2;
-            geometry_msgs::Point pt;
-            
+            geometry_msgs::msg::Point pt;
+
             for (auto p:se2_path)
             {
                 pt.x = p[3*i];
@@ -166,7 +175,8 @@ namespace trailer_planner
             front_msg.markers.push_back(line_strip);
             front_msg.markers.push_back(sphere);
         }
-        front_pub.publish(front_msg);
+        if (front_pub)
+            front_pub->publish(front_msg);
     }
 
     void Planner::vis_end()
@@ -176,7 +186,7 @@ namespace trailer_planner
         if (ttime_duration<1e-3)
             return;
 
-        visualization_msgs::MarkerArray end_msg;
+        visualization_msgs::msg::MarkerArray end_msg;
         std::vector<Eigen::VectorXd> se2_path;
 
         for (double i = 0; i < ttime_duration + 0.01; i+=0.01)
@@ -184,7 +194,7 @@ namespace trailer_planner
             double t = i;
             if (i > ttime_duration)
                 t = ttime_duration;
-            
+
             Eigen::VectorXd se2_state;
             Eigen::VectorXd state;
             state = arc_traj.getState(t);
@@ -195,11 +205,12 @@ namespace trailer_planner
         for (size_t i=0; i<TRAILER_NUM+1; i++)
         {
             double scale = 0.2;
-            visualization_msgs::Marker line_strip;
+            visualization_msgs::msg::Marker line_strip;
             line_strip.header.frame_id = "world";
-            line_strip.header.stamp = ros::Time::now();
-            line_strip.type = visualization_msgs::Marker::LINE_STRIP;
-            line_strip.action = visualization_msgs::Marker::ADD;
+            if (node_ptr)
+                line_strip.header.stamp = node_ptr->now();
+            line_strip.type = visualization_msgs::msg::Marker::LINE_STRIP;
+            line_strip.action = visualization_msgs::msg::Marker::ADD;
             line_strip.id = i + 1000;
 
             line_strip.pose.orientation.w = 1.0;
@@ -208,8 +219,8 @@ namespace trailer_planner
             line_strip.color.b = trailer->array_msg.markers[i].color.b;
             line_strip.color.a = 1;
             line_strip.scale.x = scale / 2;
-            geometry_msgs::Point pt;
-            
+            geometry_msgs::msg::Point pt;
+
             for (auto p:se2_path)
             {
                 pt.x = p[3*i];
@@ -219,19 +230,21 @@ namespace trailer_planner
             }
             end_msg.markers.push_back(line_strip);
         }
-        end_pub.publish(end_msg);
+        if (end_pub)
+            end_pub->publish(end_msg);
     }
 
     void Planner::pub_end()
     {
-        planner::ArcTrailerTraj traj_msg;
-        traj_msg.head.start_time = traj_msg.tails.start_time = ros::Time::now();
-        traj_msg.arc.start_time = ros::Time::now();
+        planner::msg::ArcTrailerTraj traj_msg;
+        rclcpp::Time stamp = node_ptr ? node_ptr->now() : rclcpp::Clock(RCL_ROS_TIME).now();
+        traj_msg.head.start_time = traj_msg.tails.start_time = stamp;
+        traj_msg.arc.start_time = stamp;
         Eigen::VectorXd durs = arc_traj.head.getDurations();
         for (int i=0; i<durs.size(); i++)
         {
             traj_msg.head.durations.push_back((float)durs[i]);
-            std_msgs::Float32MultiArray coeff_mat;
+            std_msgs::msg::Float32MultiArray coeff_mat;
             for (int j=0; j<2; j++)
             {
                 for (int k=0; k<6; k++)
@@ -245,7 +258,7 @@ namespace trailer_planner
         for (int i=0; i<durs.size(); i++)
         {
             traj_msg.tails.durations.push_back((float)durs[i]);
-            std_msgs::Float32MultiArray coeff_mat;
+            std_msgs::msg::Float32MultiArray coeff_mat;
             for (int j=0; j<TRAILER_NUM; j++)
             {
                 for (int k=0; k<6; k++)
@@ -259,7 +272,7 @@ namespace trailer_planner
         for (int i=0; i<durs.size(); i++)
         {
             traj_msg.arc.durations.push_back((float)durs[i]);
-            std_msgs::Float32MultiArray coeff_mat;
+            std_msgs::msg::Float32MultiArray coeff_mat;
             for (int j=0; j<1; j++)
             {
                 for (int k=0; k<6; k++)
@@ -270,7 +283,8 @@ namespace trailer_planner
             traj_msg.arc.coeff.push_back(coeff_mat);
         }
 
-        arc_traj_pub.publish(traj_msg);
+        if (arc_traj_pub)
+            arc_traj_pub->publish(traj_msg);
         return;
     }
 

@@ -1,4 +1,4 @@
-time start_time
+builtin_interfaces/Time start_time
 
 uint8 order
 std_msgs/Float32MultiArray[] coeff

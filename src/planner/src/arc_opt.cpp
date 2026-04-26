@@ -1,46 +1,66 @@
 #include "planner/arc_opt.h"
 
+#include <chrono>
+#include <string>
+
 namespace trailer_planner
 {
-    void ArcOpt::init(ros::NodeHandle& nh)
+    namespace
     {
-        nh.getParam("arc_opt/rho_T", rho_T);
-        nh.getParam("arc_opt/piece_times", piece_times);
-        nh.getParam("arc_opt/collision_type", collision_type);
-        nh.getParam("arc_opt/corridor_limit", corridor_limit);
-        nh.getParam("arc_opt/piece_len", piece_len);
-        nh.getParam("arc_opt/max_vel", max_vel);
-        nh.getParam("arc_opt/max_alon", max_alon);
-        nh.getParam("arc_opt/max_alat", max_alat);
-        nh.getParam("arc_opt/max_angular_vel", max_angular_vel);
-        nh.getParam("arc_opt/max_kappa", max_kappa);
-        nh.getParam("arc_opt/max_thetad", max_thetad);
-        nh.getParam("arc_opt/safe_threshold", safe_threshold);
-        nh.getParam("arc_opt/g_epsilon", g_epsilon);
-        nh.getParam("arc_opt/min_step", min_step);
-        nh.getParam("arc_opt/inner_max_iter", inner_max_iter);
-        nh.getParam("arc_opt/delta", delta);
-        nh.getParam("arc_opt/mem_size", mem_size);
-        nh.getParam("arc_opt/past", past);
-        nh.getParam("arc_opt/int_K", int_K);
-        nh.getParam("arc_opt/in_debug", in_debug);
-        nh.getParam("arc_opt/rho", rho_init);
-        nh.getParam("arc_opt/beta", beta);
-        nh.getParam("arc_opt/gamma", gamma);
-        nh.getParam("arc_opt/epsilon_con", epsilon_con);
-        nh.getParam("arc_opt/max_iter", max_iter);
-        nh.getParam("arc_opt/use_scaling", use_scaling);
-        nh.getParam("arc_opt/inner_weight_jerk", inner_weight_jerk);
-        nh.getParam("arc_opt/inner_weight_kinetics", inner_weight_kinetics);
-        nh.getParam("arc_opt/inner_weight_vel", inner_weight_vel);
-        nh.getParam("arc_opt/inner_weight_min_vel", inner_weight_min_vel);
-        nh.getParam("arc_opt/inner_weight_alon", inner_weight_alon);
-        nh.getParam("arc_opt/inner_weight_alat", inner_weight_alat);
-        nh.getParam("arc_opt/inner_weight_kappa", inner_weight_kappa);
-        nh.getParam("arc_opt/inner_weight_collision", inner_weight_collision);
-        nh.getParam("arc_opt/inner_weight_tail", inner_weight_tail);
+        template <typename T>
+        T declareOrGetParam(rclcpp::Node* node, const std::string& name, const T& default_value)
+        {
+            if (!node->has_parameter(name))
+                node->declare_parameter<T>(name, default_value);
+            T value = default_value;
+            node->get_parameter(name, value);
+            return value;
+        }
+    }
 
-        debug_pub = nh.advertise<visualization_msgs::MarkerArray>("/flat_poly/debug_path", 1);
+    void ArcOpt::init(rclcpp::Node* node)
+    {
+        node_ptr = node;
+        logger_  = node->get_logger();
+
+        rho_T                    = declareOrGetParam<double>(node, "arc_opt.rho_T",                   0.0);
+        piece_times              = declareOrGetParam<double>(node, "arc_opt.piece_times",             0.0);
+        collision_type           = declareOrGetParam<int>   (node, "arc_opt.collision_type",          0);
+        corridor_limit           = declareOrGetParam<double>(node, "arc_opt.corridor_limit",          0.0);
+        piece_len                = declareOrGetParam<double>(node, "arc_opt.piece_len",               0.0);
+        max_vel                  = declareOrGetParam<double>(node, "arc_opt.max_vel",                 0.0);
+        max_alon                 = declareOrGetParam<double>(node, "arc_opt.max_alon",                0.0);
+        max_alat                 = declareOrGetParam<double>(node, "arc_opt.max_alat",                0.0);
+        max_angular_vel          = declareOrGetParam<double>(node, "arc_opt.max_angular_vel",         0.0);
+        max_kappa                = declareOrGetParam<double>(node, "arc_opt.max_kappa",               0.0);
+        max_thetad               = declareOrGetParam<double>(node, "arc_opt.max_thetad",              0.0);
+        safe_threshold           = declareOrGetParam<double>(node, "arc_opt.safe_threshold",          0.0);
+        g_epsilon                = declareOrGetParam<double>(node, "arc_opt.g_epsilon",               0.0);
+        min_step                 = declareOrGetParam<double>(node, "arc_opt.min_step",                0.0);
+        inner_max_iter           = declareOrGetParam<double>(node, "arc_opt.inner_max_iter",          0.0);
+        delta                    = declareOrGetParam<double>(node, "arc_opt.delta",                   0.0);
+        mem_size                 = declareOrGetParam<int>   (node, "arc_opt.mem_size",                0);
+        past                     = declareOrGetParam<int>   (node, "arc_opt.past",                    0);
+        int_K                    = declareOrGetParam<int>   (node, "arc_opt.int_K",                   0);
+        in_debug                 = declareOrGetParam<bool>  (node, "arc_opt.in_debug",                false);
+        rho_init                 = declareOrGetParam<double>(node, "arc_opt.rho",                     0.0);
+        beta                     = declareOrGetParam<double>(node, "arc_opt.beta",                    0.0);
+        gamma                    = declareOrGetParam<double>(node, "arc_opt.gamma",                   0.0);
+        epsilon_con              = declareOrGetParam<double>(node, "arc_opt.epsilon_con",             0.0);
+        max_iter                 = declareOrGetParam<double>(node, "arc_opt.max_iter",                0.0);
+        use_scaling              = declareOrGetParam<bool>  (node, "arc_opt.use_scaling",             false);
+        inner_weight_jerk        = declareOrGetParam<double>(node, "arc_opt.inner_weight_jerk",       0.0);
+        inner_weight_kinetics    = declareOrGetParam<double>(node, "arc_opt.inner_weight_kinetics",   0.0);
+        inner_weight_vel         = declareOrGetParam<double>(node, "arc_opt.inner_weight_vel",        0.0);
+        inner_weight_min_vel     = declareOrGetParam<double>(node, "arc_opt.inner_weight_min_vel",    0.0);
+        inner_weight_alon        = declareOrGetParam<double>(node, "arc_opt.inner_weight_alon",       0.0);
+        inner_weight_alat        = declareOrGetParam<double>(node, "arc_opt.inner_weight_alat",       0.0);
+        inner_weight_kappa       = declareOrGetParam<double>(node, "arc_opt.inner_weight_kappa",      0.0);
+        inner_weight_collision   = declareOrGetParam<double>(node, "arc_opt.inner_weight_collision",  0.0);
+        inner_weight_tail        = declareOrGetParam<double>(node, "arc_opt.inner_weight_tail",       0.0);
+
+        debug_pub = node->create_publisher<visualization_msgs::msg::MarkerArray>(
+            "/flat_poly/debug_path", rclcpp::QoS(1));
 
         return;
     }
@@ -295,7 +315,7 @@ namespace trailer_planner
         double inner_cost;
 
         // begin PHR-ALM Method
-        ros::Time start_time = ros::Time::now();
+        auto start_time = std::chrono::steady_clock::now();
         int iter = 0;
         bool success = false;
         while (true)
@@ -348,7 +368,8 @@ namespace trailer_planner
                 break;
             }
         }
-        double opt_time = (ros::Time::now()-start_time).toSec() * 1000.0;
+        double opt_time = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - start_time).count() * 1000.0;
         PRINTF_WHITE("[ALM] Time consuming: "+to_string(opt_time)+" ms\n");
         planning_time = opt_time;
         

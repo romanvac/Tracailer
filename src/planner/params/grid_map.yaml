@@ -1,5 +1,6 @@
 planner_node:
-  grid_map:
-    map_size_x: 70.0
-    map_size_y: 20.0
-    resolution: 0.5
+  ros__parameters:
+    grid_map:
+      map_size_x: 70.0
+      map_size_y: 20.0
+      resolution: 0.5

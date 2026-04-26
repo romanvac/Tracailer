@@ -1,0 +1,49 @@
+{
+  "name": "Tracailer ROS 2 Jazzy",
+  "build": {
+    "dockerfile": "../docker/Dockerfile",
+    "context": "..",
+    "args": {
+      "USERNAME": "ros",
+      "USER_UID": "1000",
+      "USER_GID": "1000"
+    }
+  },
+  "workspaceFolder": "/workspaces/tracailer",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/tracailer,type=bind,consistency=cached",
+  "remoteUser": "ros",
+  "runArgs": [
+    "--name=tracailer-devcontainer",
+    "--network=host",
+    "--ipc=host",
+    "--privileged",
+    "--env=DISPLAY=${localEnv:DISPLAY}",
+    "--env=QT_X11_NO_MITSHM=1",
+    "--env=XAUTHORITY=/tmp/.docker.xauth",
+    "--volume=/tmp/.X11-unix:/tmp/.X11-unix:rw",
+    "--volume=/dev/dri:/dev/dri"
+  ],
+  "containerEnv": {
+    "ROS_DISTRO": "jazzy",
+    "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp"
+  },
+  "mounts": [],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "ms-python.python",
+        "ms-iot.vscode-ros",
+        "redhat.vscode-xml",
+        "redhat.vscode-yaml",
+        "twxs.cmake"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "cmake.configureOnOpen": false
+      }
+    }
+  },
+  "postCreateCommand": "sudo rosdep init 2>/dev/null || true; rosdep update || true"
+}

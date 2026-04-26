@@ -6,21 +6,21 @@
 #include <time.h>
 #include <eigen3/Eigen/Eigen>
 
-#include <ros/ros.h>
-#include <ros/package.h>
-#include <visualization_msgs/Marker.h>
-#include <nav_msgs/Path.h>
-#include <geometry_msgs/PoseWithCovarianceStamped.h>
-#include <geometry_msgs/PoseStamped.h>
-#include <std_msgs/Float64MultiArray.h>
+#include <rclcpp/rclcpp.hpp>
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
+#include <nav_msgs/msg/path.hpp>
+#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
 
 #include "planner/trailer.hpp"
 #include "planner/grid_map.h"
 #include "planner/hybrid_astar.h"
 #include "planner/arc_opt.h"
 
-#include "planner/ArcTrailerTraj.h"
-#include "planner/TrailerState.h"
+#include "planner/msg/arc_trailer_traj.hpp"
+#include "planner/msg/trailer_state.hpp"
 
 namespace trailer_planner
 {
@@ -38,20 +38,26 @@ namespace trailer_planner
             // trajs
             std::vector<Eigen::VectorXd> front_path;
             ArcTraj arc_traj;
-            
+
             // members
             Trailer::Ptr trailer;
             GridMap::Ptr grid_map;
             HybridAstar hybrid_astar;
             ArcOpt arc_opt;
 
-            ros::Publisher front_pub, end_pub, arc_traj_pub;
-            ros::Subscriber wps_sub, odom_sub;
-            
+            // ros
+            rclcpp::Node* node_ptr = nullptr;
+            rclcpp::Logger logger_ = rclcpp::get_logger("planner");
+            rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr front_pub;
+            rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr end_pub;
+            rclcpp::Publisher<planner::msg::ArcTrailerTraj>::SharedPtr arc_traj_pub;
+            rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr wps_sub;
+            rclcpp::Subscription<planner::msg::TrailerState>::SharedPtr odom_sub;
+
         public:
-            void init(ros::NodeHandle& nh);
-            void rcvWpsCallBack(const geometry_msgs::PoseWithCovarianceStamped msg);
-            void rcvOdomCallBack(planner::TrailerStatePtr msg);
+            void init(rclcpp::Node* node);
+            void rcvWpsCallBack(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
+            void rcvOdomCallBack(const planner::msg::TrailerState::SharedPtr msg);
             bool plan(Eigen::VectorXd start, Eigen::VectorXd end);
             void vis_front();
             void vis_end();
