@@ -3,9 +3,10 @@
 #include <Eigen/Eigen>
 #include <Eigen/Dense>
 
-#include <ros/ros.h>
-#include <visualization_msgs/Marker.h>
-#include <nav_msgs/Path.h>
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <visualization_msgs/msg/marker.hpp>
+#include <nav_msgs/msg/path.hpp>
 
 #include <iostream>
 #include <string>
@@ -17,7 +18,7 @@
 #include <boost/functional/hash.hpp>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-#include <pcl_ros/point_cloud.h>
+#include <pcl_conversions/pcl_conversions.h>
 
 #include <ompl/base/spaces/ReedsSheppStateSpace.h>
 #include <ompl/base/spaces/DubinsStateSpace.h>
@@ -60,9 +61,12 @@ namespace trailer_planner
     };
 
     template <typename T>
-    struct matrix_hash : std::unary_function<T, size_t> 
+    struct matrix_hash
     {
-        std::size_t operator()(T const& matrix) const 
+        using argument_type = T;
+        using result_type = std::size_t;
+
+        std::size_t operator()(T const& matrix) const
         {
             size_t seed = 0;
             for (long int i = 0; i < matrix.size(); ++i)
@@ -134,7 +138,9 @@ namespace trailer_planner
             double tie_breaker = 1.0 + 1.0 / 10000;
 
             // ros
-            ros::Publisher expanded_pub;
+            rclcpp::Node* node_ptr = nullptr;
+            rclcpp::Logger logger_ = rclcpp::get_logger("hybrid_astar");
+            rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr expanded_pub;
             Eigen::VectorXd start_pos;
             Eigen::VectorXd target_pos;
 
@@ -150,7 +156,7 @@ namespace trailer_planner
                     delete path_node_pool[i];
             }
             
-            void init(ros::NodeHandle& nh);
+            void init(rclcpp::Node* node);
             void visExpanded();
             std::vector<Eigen::VectorXd> plan(const Eigen::VectorXd& start_state, const Eigen::VectorXd& end_state);
             std::vector<Eigen::VectorXd> planAckermann(const Eigen::VectorXd& start_state, 

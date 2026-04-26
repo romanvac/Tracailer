@@ -2,17 +2,33 @@
 
 namespace trailer_planner
 {
-    void GridMap::init(ros::NodeHandle& nh)
+    void GridMap::init(rclcpp::Node* node)
     {
-        nh.getParam("grid_map/map_size_x", map_size[0]);
-        nh.getParam("grid_map/map_size_y", map_size[1]);
-        nh.getParam("grid_map/resolution", resolution);
+        node_ptr = node;
+        logger_ = node->get_logger();
 
-        esdf_pub = nh.advertise<sensor_msgs::PointCloud2>("/esdf_map", 1);
-        // cloud_sub = nh.subscribe("/local_map", 1, &GridMap::cloudCallback, this);
-        cloud_sub = nh.subscribe("/global_map", 1, &GridMap::cloudCallback, this);
-        vis_timer = nh.createTimer(ros::Duration(1.0), &GridMap::visCallback, this);
-        
+        // Parameters (ROS 2: must be declared before use). Keep flat namespace
+        // with dot-separated names that mirror the original ROS 1 keys.
+        if (!node->has_parameter("grid_map.map_size_x"))
+            node->declare_parameter<double>("grid_map.map_size_x", 0.0);
+        if (!node->has_parameter("grid_map.map_size_y"))
+            node->declare_parameter<double>("grid_map.map_size_y", 0.0);
+        if (!node->has_parameter("grid_map.resolution"))
+            node->declare_parameter<double>("grid_map.resolution", 0.1);
+
+        node->get_parameter("grid_map.map_size_x", map_size[0]);
+        node->get_parameter("grid_map.map_size_y", map_size[1]);
+        node->get_parameter("grid_map.resolution", resolution);
+
+        esdf_pub = node->create_publisher<sensor_msgs::msg::PointCloud2>("/esdf_map", 1);
+        cloud_sub = node->create_subscription<sensor_msgs::msg::PointCloud2>(
+            "/global_map",
+            rclcpp::QoS(1),
+            std::bind(&GridMap::cloudCallback, this, std::placeholders::_1));
+        vis_timer = node->create_wall_timer(
+            std::chrono::seconds(1),
+            std::bind(&GridMap::visCallback, this));
+
         // origin and boundary
         min_boundary = -map_size / 2.0;
         max_boundary = map_size / 2.0;
@@ -43,7 +59,7 @@ namespace trailer_planner
     }
 
     template <typename F_get_val, typename F_set_val>
-    void fillESDF(F_get_val f_get_val, F_set_val f_set_val, int start, int end, int size) 
+    void fillESDF(F_get_val f_get_val, F_set_val f_set_val, int start, int end, int size)
     {
         int v[size];
         double z[size + 1];
@@ -129,9 +145,9 @@ namespace trailer_planner
                 } else if (occ_buffer[toAddress(x, y)] == 1)
                 {
                     neg_map(x, y) = 0;
-                } else 
+                } else
                 {
-                    ROS_ERROR("what?");
+                    RCLCPP_ERROR(logger_, "what?");
                 }
             }
 
@@ -168,18 +184,18 @@ namespace trailer_planner
                 if (neg_buffer(x, y) > 0.0)
                     esdf_buffer[toAddress(x, y)] += (-neg_buffer(x, y) + resolution);
             }
-        
+
         return;
     }
 
-    void GridMap::cloudCallback(const sensor_msgs::PointCloud2 msg)
+    void GridMap::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
     {
         // if (map_ready)
         //     return;
-	    pcl::console::setVerbosityLevel(pcl::console::L_ALWAYS);
-        
+        pcl::console::setVerbosityLevel(pcl::console::L_ALWAYS);
+
         pcl::PointCloud<pcl::PointXYZI> pc;
-        pcl::fromROSMsg(msg, pc);
+        pcl::fromROSMsg(*msg, pc);
 
         std::vector<Eigen::Vector2d> local_p;
         int idx = 0;
@@ -194,7 +210,7 @@ namespace trailer_planner
                 {
                     local_p.push_back(Eigen::Vector2d(pc.points[i].x, pc.points[i].y));
                     idx++;
-                }  
+                }
             }
         }
         int pts_size = min((int)local_p.size(), 100);
@@ -220,23 +236,6 @@ namespace trailer_planner
                 pc.push_back(p);
             }
         }
-        // test interpolation 
-        // for (double i=min_boundary(0); i<max_boundary(0); i+=0.2*resolution)
-        // {
-        //     for (double j=min_boundary(1); j<max_boundary(1); j+=0.2*resolution)
-        //     {
-        //         Eigen::Vector2d pos(i, j);
-        //         Eigen::Vector2d grad;
-        //         double dist = 0.0;
-        //         getDisWithGradI(pos, dist, grad);
-        //         pcl::PointXYZI p;
-        //         p.x = pos(0);
-        //         p.y = pos(1);
-        //         p.z = 0.0;
-        //         p.intensity = dist;
-        //         pc.push_back(p);
-        //     }
-        // }
         pc.header.frame_id = "world";
         pc.width = pc.points.size();
         pc.height = 1;
@@ -244,19 +243,20 @@ namespace trailer_planner
         pcl::toROSMsg(pc, esdf_cloud);
 
         map_ready = true;
-        
+
         return;
     }
 
-    void GridMap::visCallback(const ros::TimerEvent& /*event*/)
+    void GridMap::visCallback()
     {
         if (!map_ready)
             return;
-        esdf_pub.publish(esdf_cloud);
+        if (esdf_pub)
+            esdf_pub->publish(esdf_cloud);
         return;
     }
 
-    std::pair<std::vector<Eigen::Vector2d>, double> GridMap::astarPlan(const Eigen::Vector2d& start, 
+    std::pair<std::vector<Eigen::Vector2d>, double> GridMap::astarPlan(const Eigen::Vector2d& start,
                                                                         const Eigen::Vector2d& end)
     {
         std::vector<Eigen::Vector2d> path;
@@ -271,7 +271,7 @@ namespace trailer_planner
 
         if(!isInMap(start) || !isInMap(end))
         {
-            ROS_ERROR("[Astar] boundary points out of map.");
+            RCLCPP_ERROR(logger_, "[Astar] boundary points out of map.");
             return make_pair(path, 0.0);
         }
 
@@ -294,7 +294,7 @@ namespace trailer_planner
             openSet.erase(iter);
 
             grid_node_map[toAddress(currentPtr->index)]->id = IN_CLOSE;
- 
+
             if( currentPtr->index == end_index )
             {
                 GridNode* p = currentPtr;
@@ -323,7 +323,7 @@ namespace trailer_planner
                     neighbor_index = currentPtr->index + Eigen::Vector2i(i ,j);
 
                     if(isInMap(neighbor_index))
-                    {  
+                    {
                         GridNodePtr neighborPtr = grid_node_map[toAddress(neighbor_index)];
                         if (neighborPtr->id == IS_UNKNOWN && !isOccupancy(neighbor_index))
                         {
@@ -357,17 +357,17 @@ namespace trailer_planner
                                 neighborPtr -> parent = currentPtr;
                                 neighborPtr -> gScore = tg;
                                 neighborPtr -> fScore = tg + heu;
-                                
+
                                 neighborPtr -> id = IN_OPEN;
                                 openSet.insert(make_pair(neighborPtr->fScore, neighborPtr));
                             }
                         }
                     }
                 }
-            }   
+            }
         }
 
-        ROS_ERROR("[Astar] Fails!!!");
+        RCLCPP_ERROR(logger_, "[Astar] Fails!!!");
         path.clear();
 
         return make_pair(path, 0.0);

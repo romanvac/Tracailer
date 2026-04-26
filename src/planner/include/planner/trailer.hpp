@@ -3,9 +3,14 @@
 #include <eigen3/Eigen/Eigen>
 #include <chrono>
 #include <random>
-#include <ros/ros.h>
-#include <visualization_msgs/Marker.h>
-#include <visualization_msgs/MarkerArray.h>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <rclcpp/rclcpp.hpp>
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
+#include <geometry_msgs/msg/point.hpp>
 
 #define PI_X_2 6.283185307179586
 #define PRINTF_WHITE(STRING) std::cout<<STRING
@@ -34,28 +39,43 @@ namespace trailer_planner
             vector<double> pthetas;
             Eigen::MatrixXd terminal_area;
             Eigen::Matrix2Xd terminal_points;
-            visualization_msgs::Marker mesh_msg;
-            visualization_msgs::MarkerArray array_msg;
-            visualization_msgs::Marker tractor_msg;
-            visualization_msgs::Marker trailer_msg;
+            visualization_msgs::msg::Marker mesh_msg;
+            visualization_msgs::msg::MarkerArray array_msg;
+            visualization_msgs::msg::Marker tractor_msg;
+            visualization_msgs::msg::Marker trailer_msg;
 
-            ros::Publisher mesh_pub;
-            ros::Publisher t0_pub, t1_pub, t2_pub, t3_pub;
-            ros::Publisher terminal_pub;
+            rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr mesh_pub;
+            rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr t0_pub;
+            rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr t1_pub;
+            rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr t2_pub;
+            rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr t3_pub;
+            rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr terminal_pub;
+
+        private:
+            // Helper: declare-if-missing + read; keeps single-node parameter namespace.
+            template <typename T>
+            static T declareOrGet(rclcpp::Node* node, const std::string& name, const T& default_value)
+            {
+                if (!node->has_parameter(name))
+                    node->declare_parameter<T>(name, default_value);
+                T value = default_value;
+                node->get_parameter(name, value);
+                return value;
+            }
             
         public:
-            inline void init(ros::NodeHandle& nh)
+            inline void init(rclcpp::Node* node)
             {
-                nh.getParam("/trailer/wheel_base", wheel_base);
-                nh.getParam("/trailer/width", width);
-                nh.getParam("/trailer/rear_length", rear_length);
-                nh.getParam("/trailer/max_steer", max_steer);
-                nh.getParam("/trailer/max_dtheta", max_dtheta);
-                nh.getParam("/trailer/terminal_tol", terminal_tol);
-                nh.param<std::vector<double>>("/trailer/length", length, std::vector<double>());
-                nh.param<std::vector<double>>("/trailer/Ltail", Ltail, std::vector<double>());
-                nh.param<std::vector<double>>("/trailer/Lhead", Lhead, std::vector<double>());
-                nh.param<std::vector<double>>("/trailer/init_pthetas", pthetas, std::vector<double>());
+                wheel_base      = declareOrGet<double>(node, "trailer.wheel_base",     0.0);
+                width           = declareOrGet<double>(node, "trailer.width",          0.0);
+                rear_length     = declareOrGet<double>(node, "trailer.rear_length",    0.0);
+                max_steer       = declareOrGet<double>(node, "trailer.max_steer",      0.0);
+                max_dtheta      = declareOrGet<double>(node, "trailer.max_dtheta",     0.0);                
+                terminal_tol    = declareOrGet<double>(node, "trailer.terminal_tol", 0.0);
+                length          = declareOrGet<std::vector<double>>(node, "trailer.length",       std::vector<double>());
+                Ltail           = declareOrGet<std::vector<double>>(node, "trailer.Ltail",        std::vector<double>());
+                Lhead           = declareOrGet<std::vector<double>>(node, "trailer.Lhead",        std::vector<double>());
+                pthetas         = declareOrGet<std::vector<double>>(node, "trailer.init_pthetas", std::vector<double>());
 
                 if (Lhead.size() > TRAILER_NUM)
                 {
@@ -69,12 +89,12 @@ namespace trailer_planner
                     }
                 }
 
-                mesh_pub = nh.advertise<visualization_msgs::MarkerArray>("trailer/mesh", 1);
-                terminal_pub = nh.advertise<visualization_msgs::Marker>("trailer/terminal", 1);
-                t0_pub = nh.advertise<visualization_msgs::Marker>("trailer/t0", 1);
-                t1_pub = nh.advertise<visualization_msgs::Marker>("trailer/t1", 1);
-                t2_pub = nh.advertise<visualization_msgs::Marker>("trailer/t2", 1);
-                t3_pub = nh.advertise<visualization_msgs::Marker>("trailer/t3", 1);
+                mesh_pub     = node->create_publisher<visualization_msgs::msg::MarkerArray>("trailer/mesh", 1);
+                t0_pub       = node->create_publisher<visualization_msgs::msg::Marker>("trailer/t0" , 1);
+                t1_pub       = node->create_publisher<visualization_msgs::msg::Marker>("trailer/t1" , 1);
+                t2_pub       = node->create_publisher<visualization_msgs::msg::Marker>("trailer/t2" , 1);
+                t3_pub       = node->create_publisher<visualization_msgs::msg::Marker>("trailer/t3" , 1);
+                terminal_pub = node->create_publisher<visualization_msgs::msg::Marker>("trailer/terminal", 1);
 
                 assert(TRAILER_NUM==Lhead.size());
                 assert(TRAILER_NUM==Ltail.size());
@@ -89,8 +109,8 @@ namespace trailer_planner
                 box_width = width + terminal_tol;
 
                 mesh_msg.id = 0;
-                mesh_msg.type = visualization_msgs::Marker::LINE_LIST;
-                mesh_msg.action = visualization_msgs::Marker::ADD;
+                mesh_msg.type = visualization_msgs::msg::Marker::LINE_LIST;
+                mesh_msg.action = visualization_msgs::msg::Marker::ADD;
                 mesh_msg.pose.orientation.w = 1.0;
                 mesh_msg.scale.x = 0.03;
                 mesh_msg.color.r = 1.0;
@@ -100,7 +120,7 @@ namespace trailer_planner
                 mesh_msg.header.frame_id = "world";
 
                 // box0
-                geometry_msgs::Point p;
+                geometry_msgs::msg::Point p;
                 p.z = 0.0;
                 p.x = -rear_length;
                 p.y = width * 0.5;
@@ -206,7 +226,7 @@ namespace trailer_planner
                     mesh_msg.points.push_back(p);
                     p.y += width;
                     mesh_msg.points.push_back(p);
-                    
+
                     // tail_{i+1}
                     p.y = 0.0;
                     p.x += 0.5 * length[i+1];
@@ -257,8 +277,8 @@ namespace trailer_planner
                 // diao
                 tractor_msg.header.frame_id = "world";
                 tractor_msg.id = 100;
-                tractor_msg.type = visualization_msgs::Marker::MESH_RESOURCE;
-                tractor_msg.action = visualization_msgs::Marker::ADD;
+                tractor_msg.type = visualization_msgs::msg::Marker::MESH_RESOURCE;
+                tractor_msg.action = visualization_msgs::msg::Marker::ADD;
                 tractor_msg.pose.position.x = 0.0;
                 tractor_msg.pose.position.y = 0.0;
                 tractor_msg.pose.position.z = 0.0;
@@ -283,7 +303,7 @@ namespace trailer_planner
             {
                 assert((size_t)state.size()==3+TRAILER_NUM);
 
-                visualization_msgs::MarkerArray msg(array_msg);
+                visualization_msgs::msg::MarkerArray msg(array_msg);
                 for (size_t i=0; i<msg.markers.size(); i++)
                 {
                     msg.markers[i].id += id;
@@ -317,19 +337,22 @@ namespace trailer_planner
                 tractor_msg.pose.orientation.x = 0.0;
                 tractor_msg.pose.orientation.y = 0.0;
                 tractor_msg.pose.orientation.z = sin(state[2]/2.0);
-                t0_pub.publish(tractor_msg);
+                if (t0_pub)
+                    t0_pub->publish(tractor_msg);
                 trailer_msg.pose.position.x = state[0] - Ltail[0] * cos(state[2]) - Lhead[0] * cos(state[3]);
                 trailer_msg.pose.position.y = state[1] - Ltail[0] * sin(state[2]) - Lhead[0] * sin(state[3]);
                 trailer_msg.pose.orientation.w = cos(state[3]/2.0);
                 trailer_msg.pose.orientation.z = sin(state[3]/2.0);
-                t1_pub.publish(trailer_msg);
+                if (t1_pub)
+                    t1_pub->publish(trailer_msg);
                 if (TRAILER_NUM > 1)
                 {
                     trailer_msg.pose.position.x -= (Lhead[1] * cos(state[4]) + Ltail[1] * cos(state[3]));
                     trailer_msg.pose.position.y -= (Lhead[1] * sin(state[4]) + Ltail[1] * sin(state[3]));
                     trailer_msg.pose.orientation.w = cos(state[4]/2.0);
                     trailer_msg.pose.orientation.z = sin(state[4]/2.0);
-                    t2_pub.publish(trailer_msg);
+                    if (t2_pub)
+                        t2_pub->publish(trailer_msg);
                 }
                 if (TRAILER_NUM > 2)
                 {
@@ -337,10 +360,12 @@ namespace trailer_planner
                     trailer_msg.pose.position.y -= (Lhead[2] * sin(state(5)) + Ltail[2] * sin(state(4)));
                     trailer_msg.pose.orientation.w = cos(state(5)/2.0); 
                     trailer_msg.pose.orientation.z = sin(state(5)/2.0);
-                    t3_pub.publish(trailer_msg);
+                    if (t3_pub)
+                        t3_pub->publish(trailer_msg);
                 }
                 
-                mesh_pub.publish(msg);
+                if (mesh_pub)
+                    mesh_pub->publish(msg);
             }
 
             inline void setShowTerminal(const Eigen::Vector3d& se2)
@@ -349,10 +374,10 @@ namespace trailer_planner
                 terminal_area.setZero();
                 terminal_points.resize(2, 4);
                 
-                visualization_msgs::Marker msg;
+                visualization_msgs::msg::Marker msg;
                 msg.id = 0;
-                msg.type = visualization_msgs::Marker::LINE_LIST;
-                msg.action = visualization_msgs::Marker::ADD;
+                msg.type = visualization_msgs::msg::Marker::LINE_LIST;
+                msg.action = visualization_msgs::msg::Marker::ADD;
                 msg.pose.orientation.w = 1.0;
                 msg.scale.x = 0.03;
                 msg.color.r = msg.color.g = msg.color.b = 0.0;
@@ -363,7 +388,7 @@ namespace trailer_planner
                 double w = box_width / 2.0;
                 double st = sin(se2(2));
                 double ct = cos(se2(2));
-                geometry_msgs::Point p;
+                geometry_msgs::msg::Point p;
                 p.z = 0.0;
                 p.x = se2.x() + ct*h - st*w;
                 p.y = se2.y() + st*h + ct*w;
@@ -396,7 +421,8 @@ namespace trailer_planner
                 p.y = se2.y() + st*h + ct*w;
                 msg.points.push_back(p);
 
-                terminal_pub.publish(msg);
+                if (terminal_pub)
+                    terminal_pub->publish(msg);
                 return;
             }
 

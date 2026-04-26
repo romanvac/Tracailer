@@ -1,25 +1,32 @@
 #pragma once
 
-#include <eigen3/Eigen/Eigen>
-#include <eigen3/Eigen/Dense>
-#include <vector>
-#include <cmath>
-#include <iostream>
-#include <fstream>
-#include <string.h>
 #include <algorithm>
+
+
+#include <cmath>
+
+#include <fstream>
+#include <iostream>
+#include <memory>
 #include <numeric>
+#include <string>
+#include <vector>
+
+#include <eigen3/Eigen/Dense>
+#include <eigen3/Eigen/Eigen>
 
 #include <casadi/casadi.hpp>
 
-#include <ros/ros.h>
-#include <std_msgs/Float64.h>
-#include <nav_msgs/Odometry.h>
-#include <geometry_msgs/PoseStamped.h>
-#include <visualization_msgs/Marker.h>
-#include <visualization_msgs/MarkerArray.h>
-#include "ackermann_msgs/AckermannDrive.h"
-#include "planner/TrailerState.h"
+#include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/float64.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
+#include <ackermann_msgs/msg/ackermann_drive.hpp>
+
+#include "planner/msg/trailer_state.hpp"
+#include "planner/msg/arc_trailer_traj.hpp"
 #include "planner/trailer.hpp"
 #include "utils/traj_anal.hpp"
 
@@ -27,11 +34,12 @@ using namespace std;
 using namespace Eigen;
 using namespace casadi;
 
-class MPC
+class MPC : public rclcpp::Node
 {
 private:
     // parameters
     /// algorithm param
+    double cpt_time = 0.1;
     double du_th = 0.1;
     double dt = 0.2;
     int Npre = 5;
@@ -74,17 +82,30 @@ private:
     TrajAnalyzer traj_analyzer;
 
     // ros interface
-	ros::NodeHandle node;
-    ros::Timer cmd_timer;
-    ros::Publisher cmd_pub, predict_pub, ref_pub;
-    ros::Subscriber odom_sub, arc_traj_sub;
-    ackermann_msgs::AckermannDrive cmd;
-    void cmdCallback(const ros::TimerEvent &e);
-    void rcvOdomCallBack(planner::TrailerStatePtr msg);
-    void rcvArcTrajCallBack(planner::ArcTrailerTrajConstPtr msg);
+	rclcpp::TimerBase::SharedPtr cmd_timer;
+    rclcpp::Publisher<ackermann_msgs::msg::AckermannDrive>::SharedPtr cmd_pub;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr predict_pub;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr ref_pub;
+    rclcpp::Subscription<planner::msg::TrailerState>::SharedPtr odom_sub;
+    rclcpp::Subscription<planner::msg::ArcTrailerTraj>::SharedPtr arc_traj_sub;
+    ackermann_msgs::msg::AckermannDrive cmd;
+
+    void cmdCallback();
+    void rcvOdomCallBack(const planner::msg::TrailerState::ConstSharedPtr msg);
+    void rcvArcTrajCallBack(const planner::msg::ArcTrailerTraj::ConstSharedPtr msg);
 
     // MPC function
     void getCmd(void);
+
+    template <typename T>
+    T declareOrGet(const std::string& name, const T& default_value)
+    {
+        if (!this->has_parameter(name))
+            this->declare_parameter<T>(name, default_value);
+        T value = default_value;
+        this->get_parameter(name, value);
+        return value;
+    }
 
     void normlize_theta(double& th)
     {
@@ -151,12 +172,12 @@ private:
     {
         int id = 0;
         double sc = 0.05;
-        visualization_msgs::Marker sphere, line_strip;
+        visualization_msgs::msg::Marker sphere, line_strip;
         sphere.header.frame_id = line_strip.header.frame_id = "world";
-        sphere.header.stamp = line_strip.header.stamp = ros::Time::now();
-        sphere.type = visualization_msgs::Marker::SPHERE_LIST;
-        line_strip.type = visualization_msgs::Marker::LINE_STRIP;
-        sphere.action = line_strip.action = visualization_msgs::Marker::ADD;
+        sphere.header.stamp = line_strip.header.stamp = this->now();
+        sphere.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+        line_strip.type = visualization_msgs::msg::Marker::LINE_STRIP;
+        sphere.action = line_strip.action = visualization_msgs::msg::Marker::ADD;
         sphere.id = id;
         line_strip.id = id + 1000;
 
@@ -169,7 +190,7 @@ private:
         sphere.scale.y = sc;
         sphere.scale.z = sc;
         line_strip.scale.x = sc / 2;
-        geometry_msgs::Point pt;
+        geometry_msgs::msg::Point pt;
         
         Slice all;
         for (int i=0; i<Npre; i++)
@@ -180,19 +201,19 @@ private:
             pt.z = 0.0;
             line_strip.points.push_back(pt);
         }
-        predict_pub.publish(line_strip);
+        predict_pub->publish(line_strip);
     }
 
     void drawRefPath(void)
     {
         int id = 0;
         double sc = 0.05;
-        visualization_msgs::Marker sphere, line_strip;
+        visualization_msgs::msg::Marker sphere, line_strip;
         sphere.header.frame_id = line_strip.header.frame_id = "world";
-        sphere.header.stamp = line_strip.header.stamp = ros::Time::now();
-        sphere.type = visualization_msgs::Marker::SPHERE_LIST;
-        line_strip.type = visualization_msgs::Marker::LINE_STRIP;
-        sphere.action = line_strip.action = visualization_msgs::Marker::ADD;
+        sphere.header.stamp = line_strip.header.stamp = this->now();
+        sphere.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+        line_strip.type = visualization_msgs::msg::Marker::LINE_STRIP;
+        sphere.action = line_strip.action = visualization_msgs::msg::Marker::ADD;
         sphere.id = id;
         line_strip.id = id + 1000;
 
@@ -205,7 +226,7 @@ private:
         sphere.scale.y = sc;
         sphere.scale.z = sc;
         line_strip.scale.x = sc / 2;
-        geometry_msgs::Point pt;
+        geometry_msgs::msg::Point pt;
         
         for (int i=0; i<Npre; i++)
         {
@@ -214,11 +235,11 @@ private:
             pt.z = 0.0;
             line_strip.points.push_back(pt);
         }
-        ref_pub.publish(line_strip);
+        ref_pub->publish(line_strip);
     }
 
 public:
-	MPC() {}
-    void init(ros::NodeHandle &nh);
-	~MPC() {}
+	MPC() : rclcpp::Node("mpc_node") {}
+    void init();
+    ~MPC() {}
 };

@@ -3,13 +3,14 @@
 #include <thread>
 #include <numeric>
 #include <unordered_map>
-
-#include <ros/ros.h>
-#include <ros/package.h>
 #include <iostream>
-#include <std_msgs/Float64.h>
-#include <visualization_msgs/Marker.h>
-#include <nav_msgs/Path.h>
+
+#include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/float64.hpp>
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
+#include <nav_msgs/msg/path.hpp>
+#include <geometry_msgs/msg/point.hpp>
 
 #include "utils/minco.hpp"
 #include "utils/lbfgs.hpp"
@@ -128,10 +129,12 @@ namespace trailer_planner
             int thread_idx = 0;
 
             // ros
-            ros::Publisher debug_pub;
-            ros::Publisher corridor_pub;
+            rclcpp::Node* node_ptr = nullptr;
+            rclcpp::Logger logger_ = rclcpp::get_logger("arc_opt");
+            rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr debug_pub;
+            rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr corridor_pub;
 
-            void init(ros::NodeHandle& nh);
+            void init(rclcpp::Node* node);
 
             bool optimizeTraj(std::vector<Eigen::VectorXd> init_path, 
                               double init_vel = 0.0, int piece_num = 0, 
@@ -152,7 +155,7 @@ namespace trailer_planner
             void pubDebugTraj(const ArcTraj& traj) const
             {
                 double scale = 0.03;
-                visualization_msgs::MarkerArray debug_msg;
+                visualization_msgs::msg::MarkerArray debug_msg;
 
                 double dur = traj.getTotalDuration();
                 std::vector<Eigen::VectorXd> se2_path;
@@ -177,12 +180,13 @@ namespace trailer_planner
 
                 for (size_t i=0; i<TRAILER_NUM+1; i++)
                 {
-                    visualization_msgs::Marker sphere, line_strip;
+                    visualization_msgs::msg::Marker sphere, line_strip;
                     sphere.header.frame_id = line_strip.header.frame_id = "world";
-                    sphere.header.stamp = line_strip.header.stamp = ros::Time::now();
-                    sphere.type = visualization_msgs::Marker::SPHERE_LIST;
-                    line_strip.type = visualization_msgs::Marker::LINE_STRIP;
-                    sphere.action = line_strip.action = visualization_msgs::Marker::ADD;
+                    if (node_ptr)
+                        sphere.header.stamp = line_strip.header.stamp = node_ptr->now();
+                    sphere.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+                    line_strip.type = visualization_msgs::msg::Marker::LINE_STRIP;
+                    sphere.action = line_strip.action = visualization_msgs::msg::Marker::ADD;
                     sphere.id = i;
                     line_strip.id = i + 1000;
 
@@ -195,8 +199,8 @@ namespace trailer_planner
                     sphere.scale.y = scale * 2;
                     sphere.scale.z = scale * 2;
                     line_strip.scale.x = scale / 2;
-                    geometry_msgs::Point pt;
-                    
+                    geometry_msgs::msg::Point pt;
+
                     for (auto p:se2_path)
                     {
                         pt.x = p[3*i];
@@ -214,7 +218,8 @@ namespace trailer_planner
                     debug_msg.markers.push_back(line_strip);
                     debug_msg.markers.push_back(sphere);
                 }
-                debug_pub.publish(debug_msg);
+                if (debug_pub)
+                    debug_pub->publish(debug_msg);
             }
 
         public:

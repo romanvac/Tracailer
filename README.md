@@ -1,64 +1,57 @@
-# Tracailer
+# Tracailer (ROS 2 Jazzy port)
 
-This repository is for the paper, "Tracailer: An Efficient Trajectory Planner for Tractor-Trailer Robots in Unstructured Environments".
+This repository accompanies the paper, "Tracailer: An Efficient Trajectory Planner for Tractor-Trailer Robots in Unstructured Environments".
 
-## Quick Start
+The project is ported to ROS 2 Jazzy and includes Docker/devcontainer support for a more reproducible setup.
 
-### Step One:
+The workspace includes the planner, simulator, MPC controller, random map generation, custom messages, launch files, and RViz support.
 
-Install the [ros](https://wiki.ros.org/ROS/Installation) and the requirements below.
+**Note:** We may have forgotten some dependencies or setup details 😟, sorry! Contributions and fixes are very welcome.
 
-**ros dependence**: (use ros noetic with Ubuntu20.04 as an example)
+## Quick start
 
-```
-sudo apt install ros-noetic-tf2-geometry-msgs
-sudo apt install ros-noetic-ackermann-msgs
-sudo apt install libompl-dev
-```
+The easiest way to run the project is through Docker or a VS Code devcontainer.
 
-**casadi for mpc controller:**
+### Docker
 
-Go to the [website of casadi](https://github.com/casadi/casadi) and install casadi. For example, you can:
+Build the image:
 
-```
-git clone https://github.com/casadi/casadi.git
-cd casadi
+```bash
+./scripts/build_docker.sh
 ```
 
-📢**Important!**: Open the `CMakeLists.txt` and set the `WITH_LAPACK_DEF` and `WITH_QPOASES_DEF` from `OFF` to `ON`, then
+Run the container with GUI forwarding:
 
-```
-mkdir build && cd build
-cmake ..
-make
-sudo make install
+```bash
+./scripts/run_docker.sh
 ```
 
-**NOTE:** We may have forgotten other dependencies 😟, sorry!
+Inside the container:
 
-### Step Two:
-
-Build the project: (you can change the trailer num defined in `src/planner/CMakeLists.txt` by changing the definition of `TRAILER_NUM`)
-
-```
-git clone https://github.com/Tracailer/Tracailer.git
-cd Tracailer
-catkin_make
+```bash
+colcon build --symlink-install
+source install/setup.bash
+ros2 launch planner run_all.launch.py
 ```
 
-### Step Three:
+If needed, the number of trailers can be changed at build time:
 
-run the project:
-
-```
-source devel/setup.bash
-roslaunch planner run_all.launch
+```bash
+colcon build --symlink-install --cmake-args -DTRAILER_NUM=4
 ```
 
-When you see the robot in the Rviz like below, you can use `2D Pose Estimate` to trigger planning.
+When the tractor-trailer model appears in RViz2, use `2D Pose Estimate` to trigger planning.
 
+### Devcontainer
 
+Open the repository in VS Code with the Dev Containers extension and choose **Reopen in Container**.
+
+Then build and run:
+
+```bash
+colcon build --symlink-install
+source install/setup.bash
+ros2 launch planner run_all.launch.py
+```
 
 https://github.com/user-attachments/assets/fdf73b8e-d21c-4661-8249-173dcd9c223d
-
-

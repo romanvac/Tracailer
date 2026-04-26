@@ -2,23 +2,25 @@
 
 using namespace std;
  
-void MPC::init(ros::NodeHandle &nh)
+void MPC::init()
 {
     vector<double> Q_ ;
     vector<double> R_;
     vector<double> Rd_;
 
-    trailer.init(nh);
-    nh.param("mpc/dt", dt, -1.0);
-    nh.param("mpc/predict_steps", Npre, -1);
-    nh.param("mpc/max_speed", max_speed, -1.0);
-    nh.param("mpc/min_speed", min_speed, -1.0);
-    nh.param("mpc/max_accel", max_accel, -1.0);
-    nh.param("mpc/max_dsteer", max_dsteer, -1.0);
-    nh.param("mpc/delay_num", delay_num, -1);
-    nh.param<std::vector<double>>("mpc/matrix_q", Q_, std::vector<double>());
-    nh.param<std::vector<double>>("mpc/matrix_r", R_, std::vector<double>());
-    nh.param<std::vector<double>>("mpc/matrix_rd", Rd_, std::vector<double>());
+    trailer.init(this);
+
+    cpt_time   = declareOrGet<double>("mpc.cpt_time",      -1.0);
+    dt         = declareOrGet<double>("mpc.dt",            -1.0);
+    Npre       = declareOrGet<int>   ("mpc.predict_steps", -1);
+    max_speed  = declareOrGet<double>("mpc.max_speed",     -1.0);
+    min_speed  = declareOrGet<double>("mpc.min_speed",     -1.0);
+    max_accel  = declareOrGet<double>("mpc.max_accel",     -1.0);
+    max_dsteer = declareOrGet<double>("mpc.max_dsteer",    -1.0);
+    delay_num  = declareOrGet<int>   ("mpc.delay_num",     -1);
+    Q_  = declareOrGet<std::vector<double>>("mpc.matrix_q",  std::vector<double>());
+    R_  = declareOrGet<std::vector<double>>("mpc.matrix_r",  std::vector<double>());
+    Rd_ = declareOrGet<std::vector<double>>("mpc.matrix_rd", std::vector<double>());
 
     DM q({Q_[0], Q_[1], Q_[2], Q_[3]});
     for (size_t i=0; i<TRAILER_NUM-1; i++)
@@ -44,18 +46,28 @@ void MPC::init(ros::NodeHandle &nh)
     cmd.speed = 0.0;
     cmd.steering_angle = 0.0;
 
-    cmd_pub = nh.advertise<ackermann_msgs::AckermannDrive>("cmd", 200);
-    predict_pub = nh.advertise<visualization_msgs::Marker>("predict_path", 10);
-    ref_pub = nh.advertise<visualization_msgs::Marker>("reference_path", 10);
+    traj_analyzer.setClock(this->get_clock());
 
-    cmd_timer = nh.createTimer(ros::Duration(0.03), &MPC::cmdCallback, this);
+    cmd_pub = this->create_publisher<ackermann_msgs::msg::AckermannDrive>("cmd", 200);
+    predict_pub = this->create_publisher<visualization_msgs::msg::Marker>("predict_path", 10);
+    ref_pub = this->create_publisher<visualization_msgs::msg::Marker>("reference_path", 10);
 
-    odom_sub = nh.subscribe("odom", 100, &MPC::rcvOdomCallBack, this);
-    arc_traj_sub = nh.subscribe("arc_traj", 100, &MPC::rcvArcTrajCallBack, this);
+    auto period = std::chrono::duration<double>(cpt_time);
+    cmd_timer = this->create_wall_timer(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(period),
+        std::bind(&MPC::cmdCallback, this));
+
+    odom_sub = this->create_subscription<planner::msg::TrailerState>(
+        "odom", rclcpp::QoS(100),
+        std::bind(&MPC::rcvOdomCallBack, this, std::placeholders::_1));
+    arc_traj_sub = this->create_subscription<planner::msg::ArcTrailerTraj>(
+        "arc_traj", rclcpp::QoS(100),
+        std::bind(&MPC::rcvArcTrajCallBack, this, std::placeholders::_1));
+
     return;
 }
 
-void MPC::rcvArcTrajCallBack(planner::ArcTrailerTrajConstPtr msg)
+void MPC::rcvArcTrajCallBack(const planner::msg::ArcTrailerTraj::ConstSharedPtr msg)
 {
     traj_analyzer.setTraj(msg);
     receive_traj = true;
@@ -63,7 +75,7 @@ void MPC::rcvArcTrajCallBack(planner::ArcTrailerTrajConstPtr msg)
     return;
 }
 
-void MPC::rcvOdomCallBack(planner::TrailerStatePtr msg)
+void MPC::rcvOdomCallBack(const planner::msg::TrailerState::ConstSharedPtr msg)
 {
     has_odom = true;
     Eigen::VectorXd s;
@@ -79,7 +91,7 @@ void MPC::rcvOdomCallBack(planner::TrailerStatePtr msg)
     return;
 }
 
-void MPC::cmdCallback(const ros::TimerEvent &e)
+void MPC::cmdCallback()
 {
     if (!has_odom || !receive_traj)
         return;
@@ -101,7 +113,7 @@ void MPC::cmdCallback(const ros::TimerEvent &e)
         getCmd();
     }
 
-    cmd_pub.publish(cmd);
+    cmd_pub->publish(cmd);
 }
 
 void MPC::getCmd(void)
@@ -185,7 +197,7 @@ void MPC::getCmd(void)
     }
     catch(const std::exception& e)
     {
-        // ROS_WARN("solver error, but we ignore.");
+        // RCLCPP_WARN(this->get_logger(), "solver error, but we ignore.");
         ;
     }
     
@@ -199,16 +211,12 @@ void MPC::getCmd(void)
     }
 }
 
-int main( int argc, char * argv[] )
-{ 
-  ros::init(argc, argv, "mpc_node");
-  ros::NodeHandle nh("~");
-
-  MPC mpc_tracker;
-
-  mpc_tracker.init(nh);
-
-  ros::spin();
-
-  return 0;
+int main(int argc, char* argv[])
+{
+    rclcpp::init(argc, argv);
+    auto mpc_tracker = std::make_shared<MPC>();
+    mpc_tracker->init();
+    rclcpp::spin(mpc_tracker);
+    rclcpp::shutdown();
+    return 0;
 }

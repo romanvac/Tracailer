@@ -1,9 +1,14 @@
 #pragma once
 
-#include "planner/ArcTrailerTraj.h"
+#include <memory>
+#include <vector>
+
+#include <eigen3/Eigen/Eigen>
+#include <rclcpp/rclcpp.hpp>
+
 #include "planner/arc_opt.h"
-#include "planner/TrailerState.h"
-#include <ros/ros.h>
+#include "planner/msg/arc_trailer_traj.hpp"
+#include "planner/msg/trailer_state.hpp"
 
 class TrajPoint
 {
@@ -21,7 +26,8 @@ class TrajAnalyzer
 {
 private:
   trailer_planner::ArcTraj arc_traj;
-  ros::Time start_time;
+  rclcpp::Clock::SharedPtr clock_;
+  rclcpp::Time start_time;
   double traj_duration;
   bool in_test = false;
 
@@ -30,7 +36,12 @@ public:
 
     TrajAnalyzer() {}
 
-    void setTraj(planner::ArcTrailerTrajConstPtr msg)
+    void setClock(rclcpp::Clock::SharedPtr clock)
+    {
+      clock_ = clock;
+    }
+
+    void setTraj(const planner::msg::ArcTrailerTraj::ConstSharedPtr msg)
     {
       std::vector<trailer_planner::CoefficientMat<1, 5>> cMats_arc;
       std::vector<trailer_planner::CoefficientMat<2, 5>> cMats;
@@ -85,7 +96,7 @@ public:
       arc_traj.arc = trailer_planner::PolyTrajectory<1, 5>(durs, cMats_arc);
       
       traj_duration = arc_traj.getTotalDuration();
-      start_time = ros::Time::now();
+      start_time = clock_ ? clock_->now() : rclcpp::Clock().now();
       at_goal = false;
       return;
     }
@@ -94,8 +105,8 @@ public:
     {
       std::vector<TrajPoint> P;
       P.clear();
-      ros::Time time_now = ros::Time::now();
-      double t_cur = (time_now - start_time).toSec();
+      rclcpp::Time time_now = clock_ ? clock_->now() : rclcpp::Clock().now();
+      double t_cur = (time_now - start_time).seconds();
       int j=0;
 
       if (t_cur > traj_duration)

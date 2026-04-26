@@ -1,21 +1,28 @@
 #include "planner/planner.h"
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
 
 using namespace trailer_planner;
 
-int main( int argc, char * argv[] )
-{ 
-    ros::init(argc, argv, "planner_node");
-    ros::NodeHandle nh("~");
+class PlannerNode : public rclcpp::Node
+{
+public:
+    PlannerNode() : rclcpp::Node("planner_node") {}
 
-    Planner planner;
-    
-    planner.init(nh);
+    void setup()
+    {
+        planner_.init(this);
+    }
 
-    // ros::MultiThreadedSpinner spinner(2);
-    // spinner.spin();
+private:
+    Planner planner_;
+};
 
-    ros::spin();
-
+int main(int argc, char* argv[])
+{
+    rclcpp::init(argc, argv);
+    auto node = std::make_shared<PlannerNode>();
+    node->setup();
+    rclcpp::spin(node);
+    rclcpp::shutdown();
     return 0;
 }

@@ -1,5 +1,4 @@
 #pragma once
-#include <ros/ros.h>
 #include <iostream>
 #include <cmath>
 #include <cfloat>
